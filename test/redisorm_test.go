@@ -28,7 +28,7 @@ var (
 // setup an in-memory redis for testing
 func setup(b *testing.B) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379", // Change if your Redis is elsewhere
+		Addr: "localhost:6380", // Change if your Redis is elsewhere
 	})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		b.Fatalf("could not connect to redis: %v", err)
@@ -118,11 +118,11 @@ func BenchmarkSaveAndLoad(b *testing.B) {
 	setup(b)
 	b.ResetTimer()
 	sess := orm.WithContext(ctx)
-	
+
 	for i := 0; i < b.N; i++ {
 		// Save
 		userToSave := &User{
-			Email: fmt.Sprintf("roundtrip%d@example.com", i),
+			Email:   fmt.Sprintf("roundtrip%d@example.com", i),
 			Country: "AU",
 		}
 		id, err := sess.Save(userToSave)
