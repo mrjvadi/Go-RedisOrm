@@ -63,7 +63,7 @@ func New(rdb *redis.Client, opts ...Option) (*Client, error) {
 
 // Key builders
 func (c *Client) keyVal(model, id string) string { return fmt.Sprintf("%s:val:%s:%s", c.ns, model, id) }
-func (c. *Client) keyVer(model, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, model, id) }
+func (c *Client) keyVer(model, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, model, id) }
 func (c *Client) keyIdx(model, field, value string) string {
 	return fmt.Sprintf("%s:idx:%s:%s:%s", c.ns, model, field, value)
 }
