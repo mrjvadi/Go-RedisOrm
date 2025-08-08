@@ -11,16 +11,15 @@ import (
 type Client struct {
 	rdb *redis.Client
 	ns  string // namespace
-	kek []byte // master key (KEK) برای لفافه‌کردن DEKها
+	kek []byte // master key (KEK)
 
 	// Lua scripts
 	luaSave             *redis.Script
 	luaDelete           *redis.Script
 	luaPayloadSave      *redis.Script
 	luaUnlock           *redis.Script
-	luaUpdateFieldsFast *redis.Script // >>>>>>>>> NEW <<<<<<<<<
+	luaUpdateFieldsFast *redis.Script
 
-	// >>>>>>>>> NEW <<<<<<<<<
 	// Cache for model metadata to avoid repeated reflection
 	metaCache sync.Map
 }
@@ -57,10 +56,9 @@ func New(rdb *redis.Client, opts ...Option) (*Client, error) {
 	c.luaSave = redis.NewScript(luaSave)
 	c.luaDelete = redis.NewScript(luaDelete)
 	c.luaPayloadSave = redis.NewScript(luaPayloadSave)
-	c.luaUpdateFieldsFast = redis.NewScript(luaUpdateFieldsFast) // >>>>>>>>> NEW <<<<<<<<<
+	c.luaUpdateFieldsFast = redis.NewScript(luaUpdateFieldsFast)
 	return c, nil
 }
-
 
 // Key builders
 func (c *Client) keyVal(model, id string) string { return fmt.Sprintf("%s:val:%s:%s", c.ns, model, id) }
@@ -80,12 +78,4 @@ func (c *Client) keyLock(model, id string) string {
 func (c *Client) keyPayload(model, id string) string {
 	return fmt.Sprintf("%s:pl:%s:%s", c.ns, model, id)
 }
-func (c *Client) keyPayloadDEK(model, id string) string {
-	return fmt.Sprintf("%s:dekp:%s:%s", c.ns, model, id)
-}
-
-// >>>>>>>>> CHANGED <<<<<<<<<
-// DEK key is now per-object, not per-field, for better performance.
-func (c *Client) keyDEKObject(model, id string) string {
-	return fmt.Sprintf("%s:dek:%s:%s", c.ns, model, id)
-}
+// keyPayloadDEK is removed as we now use the master key directly.
