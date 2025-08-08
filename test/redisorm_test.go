@@ -16,8 +16,8 @@ type User struct {
 	Version   int64     `json:"version" redis:"version"`
 	Email     string    `json:"email" secret:"true" redis:",unique"` // Using unique for benchmark
 	Country   string    `json:"country" redis:",index"`
-	CreatedAt time.Time `json:"created_at" default:"now"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at" redis:",auto_create_time"`
+	UpdatedAt time.Time `json:"updated_at" redis:",auto_update_time"`
 }
 
 var (
@@ -28,7 +28,7 @@ var (
 // setup an in-memory redis for testing
 func setup(b *testing.B) {
 	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6380", // Change if your Redis is elsewhere
+		Addr: "localhost:6379", // Change if your Redis is elsewhere
 	})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		b.Fatalf("could not connect to redis: %v", err)
@@ -135,6 +135,30 @@ func BenchmarkSaveAndLoad(b *testing.B) {
 		err = sess.Load(&loadedUser, id)
 		if err != nil {
 			b.Fatalf("Load failed during roundtrip benchmark: %v", err)
+		}
+	}
+}
+
+// >>>>>>>>> NEW BENCHMARK <<<<<<<<<
+// Benchmark for extending an object's TTL.
+func BenchmarkTouch(b *testing.B) {
+	setup(b)
+	sess := orm.WithContext(ctx)
+
+	// Create a sample user to touch
+	sampleUser := &User{Email: "touch-test@example.com", Country: "NZ"}
+	id, err := sess.Save(sampleUser, 10*time.Second) // Save with a short TTL
+	if err != nil {
+		b.Fatalf("failed to save sample user for touch benchmark: %v", err)
+	}
+
+	b.ResetTimer() // Start timing
+
+	for i := 0; i < b.N; i++ {
+		// Use the model name as a string
+		err := sess.Touch("User", id, 30*time.Second)
+		if err != nil {
+			b.Fatalf("failed to touch user: %v", err)
 		}
 	}
 }
