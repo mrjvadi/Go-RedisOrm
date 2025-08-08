@@ -51,7 +51,6 @@ func (s *Session) UpdateFieldsFast(sample any, id string, updates map[string]any
 // Exists بررسی می‌کند که آیا شیء با کلید اصلی مشخص شده وجود دارد یا خیر.
 func (s *Session) Exists(sample any, id string) (bool, error) { return s.c.Exists(s.ctx, sample, id) }
 
-// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
 // Touch زمان انقضای (TTL) یک شیء را بدون نیاز به ذخیره مجدد، تمدید می‌کند.
 func (s *Session) Touch(sample any, id string, ttl time.Duration) error {
 	return s.c.Touch(s.ctx, sample, id, ttl)
@@ -67,7 +66,6 @@ func (s *Session) FindPayload(sample any, id string, decrypt bool) ([]byte, erro
 	return s.c.GetPayload(s.ctx, sample, id, decrypt)
 }
 
-// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
 // TouchPayload زمان انقضای (TTL) یک payload را تمدید می‌کند.
 func (s *Session) TouchPayload(sample any, id string, ttl time.Duration) error {
 	return s.c.TouchPayload(s.ctx, sample, id, ttl)
@@ -169,7 +167,8 @@ func (op *TransactionalOperation) Execute(fn func(v any) error) error {
 	if vp, _ := versionPointer(obj); vp != nil {
 		_, err = op.sess.c.SaveOptimistic(op.sess.ctx, obj)
 	} else {
-		_, err = op.sess.c.Save(obj)
+		// >>>>>>>>> FIX: Added missing context argument <<<<<<<<<
+		_, err = op.sess.c.Save(op.sess.ctx, obj)
 	}
 
 	if err != nil {
