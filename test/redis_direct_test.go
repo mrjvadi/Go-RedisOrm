@@ -20,9 +20,10 @@ type BenchmarkUser struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-var (
-	rdb *redis.Client
-)
+// *** FIX: Removed the redeclaration of 'rdb'. It will use the one from redisorm_test.go ***
+// var (
+// 	rdb *redis.Client
+// )
 
 // setupDirect connects to Redis for benchmarking.
 func setupDirect(b *testing.B) {
@@ -30,7 +31,7 @@ func setupDirect(b *testing.B) {
 		return
 	}
 	rdb = redis.NewClient(&redis.Options{
-		Addr: "localhost:6380", // Change if your Redis is elsewhere
+		Addr: "localhost:6379", // Change if your Redis is elsewhere
 	})
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		b.Fatalf("could not connect to redis: %v", err)

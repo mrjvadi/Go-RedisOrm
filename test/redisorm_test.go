@@ -85,6 +85,7 @@ func TestTagsAndHooks(t *testing.T) {
 	}
 
 	// 3. بررسی می‌کنیم که آیا نام مدل سفارشی در کلید Redis استفاده شده است
+	// *** FIX: Use the 'ns' variable instead of a non-existent method ***
 	expectedKey := fmt.Sprintf("%s:val:%s:%s", ns, "audit_events", id)
 	exists, err := rdb.Exists(ctx, expectedKey).Result()
 	if err != nil || exists == 0 {
