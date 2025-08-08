@@ -227,7 +227,6 @@ func (c *Client) Load(ctx context.Context, dst any, id string) error {
 	return json.Unmarshal(plain, dst)
 }
 
-// >>>>>>>>> RE-IMPLEMENTED AND FIXED <<<<<<<<<
 func (c *Client) Delete(ctx context.Context, v any, id string) error {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
@@ -314,7 +313,6 @@ func (c *Client) UpdateFieldsFast(ctx context.Context, sample any, id string, up
 	return nil
 }
 
-// >>>>>>>>> RE-IMPLEMENTED AND FIXED <<<<<<<<<
 func (c *Client) Exists(ctx context.Context, sample any, id string) (bool, error) {
 	meta, err := c.getModelMetadata(sample)
 	if err != nil {
@@ -347,7 +345,6 @@ func (c *Client) PageIDsByEncIndex(ctx context.Context, sample any, field, plain
 	return ids, next, err
 }
 
-// >>>>>>>>> RE-IMPLEMENTED AND FIXED <<<<<<<<<
 func (c *Client) SavePayload(ctx context.Context, sample any, id string, payload any, encrypt bool, ttl ...time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")

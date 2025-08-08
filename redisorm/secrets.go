@@ -10,7 +10,6 @@ import (
 	"github.com/redis/go-redis/v9" // >>>>>>>>> FIX: ADDED MISSING IMPORT <<<<<<<<<
 )
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 // getOrMakeObjectDEK gets or creates a single Data Encryption Key for an entire object.
 func (c *Client) getOrMakeObjectDEK(ctx context.Context, model, id string) ([]byte, error) {
 	key := c.keyDEKObject(model, id) // Use the new per-object key
@@ -102,12 +101,6 @@ func (c *Client) decryptForType(ctx context.Context, meta *ModelMetadata, id, en
 	var dekErr error
 	dekFetched := false
 
-	// Create a map from json name back to field name for easy lookup
-	jsonToField := make(map[string]string)
-	for f, j := range meta.JsonNames {
-		jsonToField[j] = f
-	}
-
 	for _, fieldName := range meta.SecretFields {
 		jsonName := meta.JsonNames[fieldName]
 		if raw, ok := m[jsonName]; ok {
@@ -115,7 +108,6 @@ func (c *Client) decryptForType(ctx context.Context, meta *ModelMetadata, id, en
 				if !dekFetched {
 					dek, dekErr = c.getOrMakeObjectDEK(ctx, meta.StructName, id)
 					if dekErr != nil {
-						// If key is not found, maybe it's an old object. Tolerate.
 						if dekErr == redis.Nil {
 							continue
 						}
@@ -143,8 +135,6 @@ func (c *Client) decryptForType(ctx context.Context, meta *ModelMetadata, id, en
 	return rebuilt, nil
 }
 
-// >>>>>>>>> NEW HELPER FUNCTION <<<<<<<<<
-// encryptUpdateMap encrypts fields in an update map that are marked as secret.
 func (c *Client) encryptUpdateMap(ctx context.Context, meta *ModelMetadata, id string, updates map[string]any) (map[string]any, error) {
 	if len(meta.SecretFields) == 0 {
 		return updates, nil
