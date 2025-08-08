@@ -51,9 +51,10 @@ func (s *Session) UpdateFieldsFast(sample any, id string, updates map[string]any
 // Exists بررسی می‌کند که آیا شیء با کلید اصلی مشخص شده وجود دارد یا خیر.
 func (s *Session) Exists(sample any, id string) (bool, error) { return s.c.Exists(s.ctx, sample, id) }
 
+// >>>>>>>>> FIX: Changed signature to accept modelName string <<<<<<<<<
 // Touch زمان انقضای (TTL) یک شیء را بدون نیاز به ذخیره مجدد، تمدید می‌کند.
-func (s *Session) Touch(sample any, id string, ttl time.Duration) error {
-	return s.c.Touch(s.ctx, sample, id, ttl)
+func (s *Session) Touch(modelName string, id string, ttl time.Duration) error {
+	return s.c.Touch(s.ctx, modelName, id, ttl)
 }
 
 // SavePayload یک داده اضافی (payload) را به یک شیء اصلی متصل می‌کند.
@@ -66,9 +67,10 @@ func (s *Session) FindPayload(sample any, id string, decrypt bool) ([]byte, erro
 	return s.c.GetPayload(s.ctx, sample, id, decrypt)
 }
 
+// >>>>>>>>> FIX: Changed signature to accept modelName string <<<<<<<<<
 // TouchPayload زمان انقضای (TTL) یک payload را تمدید می‌کند.
-func (s *Session) TouchPayload(sample any, id string, ttl time.Duration) error {
-	return s.c.TouchPayload(s.ctx, sample, id, ttl)
+func (s *Session) TouchPayload(modelName string, id string, ttl time.Duration) error {
+	return s.c.TouchPayload(s.ctx, modelName, id, ttl)
 }
 
 // PageIDsByIndex شناسه‌های اشیاء را بر اساس یک ایندکس معمولی، به صورت صفحه‌بندی شده جستجو می‌کند.
@@ -167,7 +169,6 @@ func (op *TransactionalOperation) Execute(fn func(v any) error) error {
 	if vp, _ := versionPointer(obj); vp != nil {
 		_, err = op.sess.c.SaveOptimistic(op.sess.ctx, obj)
 	} else {
-		// >>>>>>>>> FIX: Added missing context argument <<<<<<<<<
 		_, err = op.sess.c.Save(op.sess.ctx, obj)
 	}
 

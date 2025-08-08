@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// prepareSaveInternal منطق اصلی آماده‌سازی یک شیء برای ذخیره را در خود دارد.
 func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion any, ttl ...time.Duration) (string, []string, []interface{}, error) {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
@@ -23,7 +24,6 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 	}
 	applyDefaults(v, meta)
 	
-	// بررسی اینکه آیا شیء جدید است یا خیر (برای قلاب auto_create_time)
 	isNew := false
 	id, err := readPrimaryKey(v, meta)
 	if err != nil || id == "" {
@@ -35,10 +35,8 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		return "", nil, nil, err
 	}
 
-	// >>>>>>>>> NEW: Apply lifecycle hooks <<<<<<<<<
 	applyLifecycleHooks(v, meta, isNew)
 
-	// ... (بقیه تابع بدون تغییر باقی می‌ماند)
 	valKey := c.keyVal(meta.StructName, id)
 	verKey := c.keyVer(meta.StructName, id)
 
@@ -96,7 +94,7 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 
 	return id, keys, argv, nil
 }
-// (سایر توابع بدون تغییر باقی می‌مانند)
+
 func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
 	if v == nil {
 		return "", errors.New("nil value")
