@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.comcom/google/uuid"
+	"github.com/google/uuid"
 )
 
 // Defaultable یک اینترفیس برای structهایی است که نیاز به تنظیم مقادیر پیش‌فرض سفارشی دارند.
@@ -50,7 +50,9 @@ func applyLifecycleHooks(v any, meta *ModelMetadata, isNew bool) {
 	}
 }
 
-// (سایر توابع مانند ensurePrimaryKey, readPrimaryKey, applyDefaults و ... بدون تغییر باقی می‌مانند)
+// ensurePrimaryKey بررسی می‌کند که کلید اصلی وجود داشته باشد.
+// اگر کلید از نوع رشته و خالی باشد، یک UUID جدید برای آن تولید می‌کند.
+// اگر کلید از نوع غیررشته باشد، بررسی می‌کند که مقدار آن توسط کاربر تعیین شده باشد.
 func ensurePrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -64,18 +66,32 @@ func ensurePrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	pkFieldName := meta.PKFields[0]
 	fv := rv.FieldByName(pkFieldName)
 
-	if fv.Kind() != reflect.String || !fv.CanSet() {
-		return "", errors.New("pk must be settable string")
+	if !fv.CanSet() {
+		return "", errors.New("pk field must be settable")
 	}
 
-	id := fv.String()
-	if id == "" {
-		id = uuid.NewString()
-		fv.SetString(id)
+	// اگر فیلد کلید اصلی از نوع رشته باشد، به صورت خودکار UUID تولید کن
+	if fv.Kind() == reflect.String {
+		id := fv.String()
+		if id == "" {
+			id = uuid.NewString()
+			fv.SetString(id)
+		}
+		return id, nil
 	}
+
+	// برای کلیدهای اصلی غیررشته‌ای، بررسی کن که مقدارشان صفر نباشد
+	if isZero(fv) {
+		return "", errors.New("non-string primary key must be set manually and be non-zero")
+	}
+
+	// مقدار کلید اصلی را به رشته تبدیل کن
+	id := fmt.Sprint(fv.Interface())
 	return id, nil
 }
 
+// readPrimaryKey مقدار کلید اصلی را به صورت رشته می‌خواند.
+// اگر مقدار کلید اصلی صفر (پیش‌فرض) باشد، یک رشته خالی برمی‌گرداند.
 func readPrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -89,10 +105,17 @@ func readPrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	pkFieldName := meta.PKFields[0]
 	fv := rv.FieldByName(pkFieldName)
 
-	if fv.Kind() != reflect.String {
-		return "", errors.New("pk must be string")
+	if !fv.IsValid() {
+		return "", errors.New("pk field is not valid")
 	}
-	return fv.String(), nil
+
+	// اگر مقدار کلید اصلی صفر باشد، رشته خالی برگردان
+	if isZero(fv) {
+		return "", nil
+	}
+
+	// مقدار کلید را به رشته تبدیل کرده و برگردان
+	return fmt.Sprint(fv.Interface()), nil
 }
 
 func applyDefaults(v any, meta *ModelMetadata) {
