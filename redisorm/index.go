@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func extractIndexable(v any, plain []byte, meta *ModelMetadata) map[string]string {
 	idx := map[string]string{}
 	if len(meta.IndexedFields) == 0 {
@@ -24,7 +23,6 @@ func extractIndexable(v any, plain []byte, meta *ModelMetadata) map[string]strin
 	return idx
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func extractEncIndex(c *Client, v any, plain []byte, meta *ModelMetadata) map[string]string {
 	encIdx := map[string]string{}
 	if len(meta.EncIndexedFields) == 0 {
@@ -43,7 +41,6 @@ func extractEncIndex(c *Client, v any, plain []byte, meta *ModelMetadata) map[st
 	return encIdx
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func extractUnique(v any, plain []byte, meta *ModelMetadata) map[string]string {
 	uniq := map[string]string{}
 	if len(meta.UniqueFields) == 0 {

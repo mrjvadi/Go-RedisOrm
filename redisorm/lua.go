@@ -1,6 +1,5 @@
 package redisorm
 
-// ... (luaUnlock, luaSave, luaDelete scripts remain the same)
 const luaUnlock = `
 if redis.call("GET", KEYS[1]) == ARGV[1] then
   return redis.call("DEL", KEYS[1])
@@ -98,8 +97,6 @@ if rmver == '1' then redis.call('DEL', verKey) end
 return 1
 `
 
-// >>>>>>>>> CHANGED <<<<<<<<<
-// Payload save: Simplified to no longer manage a separate DEK.
 const luaPayloadSave = `
 -- KEYS: [pkey]
 -- ARGV: [val, ttl_ms]

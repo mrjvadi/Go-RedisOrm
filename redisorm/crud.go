@@ -5,38 +5,42 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
-	if v == nil {
-		return "", errors.New("nil value")
-	}
+// prepareSaveInternal منطق اصلی آماده‌سازی یک شیء برای ذخیره را در خود دارد.
+// این تابع برای جلوگیری از تکرار کد بین Save و SaveAll استفاده می‌شود.
+func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion any, ttl ...time.Duration) (string, []string, []interface{}, error) {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
+
 	if d, ok := v.(Defaultable); ok {
 		d.SetDefaults()
 	}
 	applyDefaults(v, meta)
 	id, err := ensurePrimaryKey(v, meta)
 	if err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
 	touchTimestamps(v, meta)
+
 	valKey := c.keyVal(meta.StructName, id)
 	verKey := c.keyVer(meta.StructName, id)
+
 	plain, err := json.Marshal(v)
 	if err != nil {
-		return "", fmt.Errorf("marshal plain: %w", err)
+		return "", nil, nil, fmt.Errorf("marshal plain: %w", err)
 	}
 	newIdx := extractIndexable(v, plain, meta)
 	newUniq := extractUnique(v, plain, meta)
 	newIdxEnc := extractEncIndex(c, v, plain, meta)
+
 	var oldIdx, oldUniq, oldIdxEnc map[string]string
 	if encOld, _ := c.rdb.Get(ctx, valKey).Result(); encOld != "" {
 		if oldPlain, _ := c.decryptForType(ctx, meta, encOld); len(oldPlain) > 0 {
@@ -45,31 +49,53 @@ func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string,
 			oldIdxEnc = extractEncIndex(c, v, oldPlain, meta)
 		}
 	}
-	// >>>>>>>>> CHANGED: Removed 'id' argument from buildEncryptedMap <<<<<<<<<
+
 	encMap, err := c.buildEncryptedMap(ctx, v, meta)
 	if err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
 	encJSON, err := json.Marshal(encMap)
 	if err != nil {
-		return "", fmt.Errorf("marshal enc: %w", err)
+		return "", nil, nil, fmt.Errorf("marshal enc: %w", err)
 	}
+
 	addUniq, delUniq := diffUniqueKeys(c, meta.StructName, newUniq, oldUniq)
 	addIdx, remIdx := diffIndexKeys(c, meta.StructName, newIdx, oldIdx)
 	addIdxEnc, remIdxEnc := diffEncIndexKeys(c, meta.StructName, newIdxEnc, oldIdxEnc)
+
 	var exp time.Duration
 	if len(ttl) > 0 {
 		exp = ttl[0]
 	}
+
 	keys := make([]string, 0, 2+len(addUniq)+len(delUniq)+len(addIdx)+len(remIdx)+len(addIdxEnc)+len(remIdxEnc))
-	keys = append(keys, verKey, valKey)
-	keys = append(keys, addUniq...)
+	keys = append(keys, verKey, valKey, addUniq...)
 	keys = append(keys, delUniq...)
 	keys = append(keys, addIdx...)
 	keys = append(keys, remIdx...)
 	keys = append(keys, addIdxEnc...)
 	keys = append(keys, remIdxEnc...)
-	argv := []interface{}{id, string(encJSON), int64(exp.Milliseconds()), "", len(addUniq), len(delUniq), len(addIdx), len(remIdx), len(addIdxEnc), len(remIdxEnc)}
+
+	argv := []interface{}{
+		id, string(encJSON), int64(exp.Milliseconds()),
+		expectedVersion,
+		len(addUniq), len(delUniq),
+		len(addIdx), len(remIdx),
+		len(addIdxEnc), len(remIdxEnc),
+	}
+
+	return id, keys, argv, nil
+}
+
+func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
+	if v == nil {
+		return "", errors.New("nil value")
+	}
+	id, keys, argv, err := c.prepareSaveInternal(ctx, v, "", ttl...)
+	if err != nil {
+		return "", err
+	}
+
 	_, err = c.luaSave.Run(ctx, c.rdb, keys, argv...).Result()
 	if err != nil {
 		return "", err
@@ -77,71 +103,64 @@ func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string,
 	return id, nil
 }
 
+// SaveAll یک اسلایس از اشیاء را با استفاده از Redis pipeline برای عملکرد بالا ذخیره می‌کند.
+func (c *Client) SaveAll(ctx context.Context, slice any) ([]string, error) {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return nil, errors.New("input must be a slice of pointers to structs")
+	}
+	count := rv.Len()
+	if count == 0 {
+		return []string{}, nil
+	}
+
+	pipe := c.rdb.Pipeline()
+	ids := make([]string, count)
+	cmds := make([]*redis.StringCmd, count)
+
+	for i := 0; i < count; i++ {
+		v := rv.Index(i).Interface()
+		id, keys, argv, err := c.prepareSaveInternal(ctx, v, "")
+		if err != nil {
+			return nil, fmt.Errorf("error preparing item %d: %w", i, err)
+		}
+		ids[i] = id
+		cmds[i] = c.luaSave.Run(ctx, pipe, keys, argv...)
+	}
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("pipeline execution failed: %w", err)
+	}
+
+	for i, cmd := range cmds {
+		if err := cmd.Err(); err != nil {
+			// تلاش برای برگرداندن یک پیام خطای مفیدتر
+			if strings.Contains(err.Error(), "UNIQUE_CONFLICT") {
+				return nil, fmt.Errorf("unique constraint violation on item %d (id: %s)", i, ids[i])
+			}
+			return nil, fmt.Errorf("failed to save item %d (id: %s): %w", i, ids[i], err)
+		}
+	}
+
+	return ids, nil
+}
+
 func (c *Client) SaveOptimistic(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
 	if v == nil {
 		return "", errors.New("nil value")
-	}
-	meta, err := c.getModelMetadata(v)
-	if err != nil {
-		return "", err
 	}
 	vp, _ := versionPointer(v)
 	if vp == nil {
 		return "", errors.New("no Version int64 field for optimistic save")
 	}
-	if d, ok := v.(Defaultable); ok {
-		d.SetDefaults()
-	}
-	applyDefaults(v, meta)
-	id, err := ensurePrimaryKey(v, meta)
+	expectedVersion := *vp
+	setVersion(v, expectedVersion+1)
+
+	id, keys, argv, err := c.prepareSaveInternal(ctx, v, expectedVersion, ttl...)
 	if err != nil {
 		return "", err
 	}
-	valKey := c.keyVal(meta.StructName, id)
-	verKey := c.keyVer(meta.StructName, id)
-	expected := *vp
-	setVersion(v, expected+1)
-	touchTimestamps(v, meta)
-	plain, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	newIdx := extractIndexable(v, plain, meta)
-	newUniq := extractUnique(v, plain, meta)
-	newIdxEnc := extractEncIndex(c, v, plain, meta)
-	var oldIdx, oldUniq, oldIdxEnc map[string]string
-	if encOld, _ := c.rdb.Get(ctx, valKey).Result(); encOld != "" {
-		if oldPlain, _ := c.decryptForType(ctx, meta, encOld); len(oldPlain) > 0 {
-			oldIdx = extractIndexable(v, oldPlain, meta)
-			oldUniq = extractUnique(v, oldPlain, meta)
-			oldIdxEnc = extractEncIndex(c, v, oldPlain, meta)
-		}
-	}
-	// >>>>>>>>> CHANGED: Removed 'id' argument from buildEncryptedMap <<<<<<<<<
-	encMap, err := c.buildEncryptedMap(ctx, v, meta)
-	if err != nil {
-		return "", err
-	}
-	encJSON, err := json.Marshal(encMap)
-	if err != nil {
-		return "", err
-	}
-	addUniq, delUniq := diffUniqueKeys(c, meta.StructName, newUniq, oldUniq)
-	addIdx, remIdx := diffIndexKeys(c, meta.StructName, newIdx, oldIdx)
-	addIdxEnc, remIdxEnc := diffEncIndexKeys(c, meta.StructName, newIdxEnc, oldIdxEnc)
-	var exp time.Duration
-	if len(ttl) > 0 {
-		exp = ttl[0]
-	}
-	keys := make([]string, 0, 2+len(addUniq)+len(delUniq)+len(addIdx)+len(remIdx)+len(addIdxEnc)+len(remIdxEnc))
-	keys = append(keys, verKey, valKey)
-	keys = append(keys, addUniq...)
-	keys = append(keys, delUniq...)
-	keys = append(keys, addIdx...)
-	keys = append(keys, remIdx...)
-	keys = append(keys, addIdxEnc...)
-	keys = append(keys, remIdxEnc...)
-	argv := []interface{}{id, string(encJSON), int64(exp.Milliseconds()), expected, len(addUniq), len(delUniq), len(addIdx), len(remIdx), len(addIdxEnc), len(remIdxEnc)}
+
 	_, err = c.luaSave.Run(ctx, c.rdb, keys, argv...).Result()
 	if err != nil {
 		if strings.Contains(err.Error(), "VERSION_CONFLICT") {
@@ -155,6 +174,7 @@ func (c *Client) SaveOptimistic(ctx context.Context, v any, ttl ...time.Duration
 	return id, nil
 }
 
+// ... (سایر توابع CRUD مانند Load, Delete, UpdateFields و غیره در اینجا قرار دارند)
 func (c *Client) Load(ctx context.Context, dst any, id string) error {
 	if dst == nil {
 		return errors.New("nil dst")
@@ -174,7 +194,6 @@ func (c *Client) Load(ctx context.Context, dst any, id string) error {
 	if err != nil {
 		return err
 	}
-	// >>>>>>>>> CHANGED: Removed 'id' argument from decryptForType <<<<<<<<<
 	plain, err := c.decryptForType(ctx, meta, encJSON)
 	if err != nil {
 		return err
@@ -243,7 +262,6 @@ func (c *Client) UpdateFieldsFast(ctx context.Context, sample any, id string, up
 		return errors.New("empty id for UpdateFieldsFast")
 	}
 	valKey := c.keyVal(meta.StructName, id)
-	// >>>>>>>>> CHANGED: Removed 'id' argument from encryptUpdateMap <<<<<<<<<
 	encryptedUpdates, err := c.encryptUpdateMap(ctx, meta, updates)
 	if err != nil {
 		return fmt.Errorf("could not encrypt updates: %w", err)
@@ -294,7 +312,6 @@ func (c *Client) PageIDsByEncIndex(ctx context.Context, sample any, field, plain
 	return ids, next, err
 }
 
-// >>>>>>>>> CHANGED: Simplified SavePayload <<<<<<<<<
 func (c *Client) SavePayload(ctx context.Context, sample any, id string, payload any, encrypt bool, ttl ...time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
@@ -323,7 +340,6 @@ func (c *Client) SavePayload(ctx context.Context, sample any, id string, payload
 	return err
 }
 
-// >>>>>>>>> CHANGED: Simplified GetPayload <<<<<<<<<
 func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt bool) ([]byte, error) {
 	if id == "" {
 		return nil, errors.New("empty id")
@@ -347,32 +363,51 @@ func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt 
 	return []byte(val), nil
 }
 
-func (c *Client) Touch(ctx context.Context, sample any, id string, ttl time.Duration) error {
+// >>>>>>>>> CHANGED <<<<<<<<<
+// Touch زمان انقضای (TTL) یک کلید را تمدید می‌کند.
+// این تابع اکنون به جای یک نمونه struct، نام مدل را به عنوان رشته دریافت می‌کند.
+func (c *Client) Touch(ctx context.Context, modelName string, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	meta, err := c.getModelMetadata(sample)
+	if modelName == "" {
+		return errors.New("modelName cannot be empty")
+	}
+	key := c.keyVal(modelName, id)
+	// با استفاده از EXISTS اطمینان حاصل می‌کنیم که کلید وجود دارد.
+	// دستور EXPIRE اگر کلید وجود نداشته باشد 0 برمی‌گرداند که می‌تواند گمراه‌کننده باشد.
+	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
 	}
-	key := c.keyVal(meta.StructName, id)
+	if exists == 0 {
+		return redis.Nil // مانند GET، اگر کلید پیدا نشد Nil برگردان.
+	}
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
-func (c *Client) TouchPayload(ctx context.Context, sample any, id string, ttl time.Duration) error {
+// >>>>>>>>> CHANGED <<<<<<<<<
+// TouchPayload زمان انقضای (TTL) یک payload را تمدید می‌کند.
+func (c *Client) TouchPayload(ctx context.Context, modelName string, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	meta, err := c.getModelMetadata(sample)
+	if modelName == "" {
+		return errors.New("modelName cannot be empty")
+	}
+	key := c.keyPayload(modelName, id)
+	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
 	}
-	key := c.keyPayload(meta.StructName, id)
+	if exists == 0 {
+		return redis.Nil
+	}
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }

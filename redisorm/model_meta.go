@@ -13,14 +13,14 @@ type ModelMetadata struct {
 	JsonNames map[string]string
 
 	// Lists of Go field names
-	PKFields        []string
-	VersionFields   []string
-	IndexedFields   []string
+	PKFields         []string
+	VersionFields    []string
+	IndexedFields    []string
 	EncIndexedFields []string
-	UniqueFields    []string
-	SecretFields    []string
-	DefaultFields   map[string]string // field name -> default tag value
-	TimestampFields []string
+	UniqueFields     []string
+	SecretFields     []string
+	DefaultFields    map[string]string // field name -> default tag value
+	TimestampFields  []string
 }
 
 // getModelMetadata analyzes a struct type using reflection and caches the result.

@@ -78,4 +78,3 @@ func (c *Client) keyLock(model, id string) string {
 func (c *Client) keyPayload(model, id string) string {
 	return fmt.Sprintf("%s:pl:%s:%s", c.ns, model, id)
 }
-// keyPayloadDEK is removed as we now use the master key directly.

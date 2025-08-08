@@ -20,7 +20,6 @@ func typeName(v any) string {
 	return t.Name()
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func ensurePrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -46,7 +45,6 @@ func ensurePrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	return id, nil
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func readPrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -66,7 +64,6 @@ func readPrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	return fv.String(), nil
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func touchTimestamps(v any, meta *ModelMetadata) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -89,7 +86,6 @@ func touchTimestamps(v any, meta *ModelMetadata) {
 	}
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
 func applyDefaults(v any, meta *ModelMetadata) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
