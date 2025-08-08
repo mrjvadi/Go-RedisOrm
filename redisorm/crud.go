@@ -19,22 +19,24 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		return "", nil, nil, err
 	}
 
-	if d, ok := v.(Defaultable); ok {
-		d.SetDefaults()
-	}
-	applyDefaults(v, meta)
-	
+	// FIX: Check if the object is new *before* applying defaults to the PK.
 	isNew := false
 	id, err := readPrimaryKey(v, meta)
 	if err != nil || id == "" {
 		isNew = true
 	}
+
+	if d, ok := v.(Defaultable); ok {
+		d.SetDefaults()
+	}
+	applyDefaults(v, meta)
 	
 	id, err = ensurePrimaryKey(v, meta)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
+	// Now apply lifecycle hooks using the correctly determined `isNew` status.
 	applyLifecycleHooks(v, meta, isNew)
 
 	valKey := c.keyVal(meta.StructName, id)
