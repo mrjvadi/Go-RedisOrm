@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"github.com/redis/go-redis/v9" // >>>>>>>>> FIX: ADDED MISSING IMPORT <<<<<<<<<
 )
 
 // >>>>>>>>> CHANGED <<<<<<<<<
