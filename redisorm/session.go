@@ -61,7 +61,7 @@ func (s *Session) Edit(dst any, id string, mut func() error) (string, error) {
 	}
 
 	if id == "" {
-		id, err = readPrimaryKey(dst, meta)
+		id, err = readPrimaryKey(dst, meta) // Pass meta object
 		if err != nil || id == "" {
 			return "", errors.New("empty id")
 		}
