@@ -59,52 +59,52 @@ func extractUnique(v any, plain []byte, meta *ModelMetadata) map[string]string {
 	return uniq
 }
 
-func diffUniqueKeys(c *Client, model string, cur, prev map[string]string) (add, del []string) {
+func diffUniqueKeys(c *Client, modelPrefix string, cur, prev map[string]string) (add, del []string) {
 	for f, v := range cur {
 		if prev == nil || prev[f] != v {
-			add = append(add, c.keyUniq(model, f, v))
+			add = append(add, c.keyUniq(modelPrefix, f, v))
 		}
 	}
 	for f, v := range prev {
 		if cur == nil || cur[f] != v {
-			del = append(del, c.keyUniq(model, f, v))
+			del = append(del, c.keyUniq(modelPrefix, f, v))
 		}
 	}
 	return
 }
 
-func diffIndexKeys(c *Client, model string, cur, prev map[string]string) (add, rem []string) {
+func diffIndexKeys(c *Client, modelPrefix string, cur, prev map[string]string) (add, rem []string) {
 	for f, v := range cur {
 		if prev == nil || prev[f] != v {
-			add = append(add, c.keyIdx(model, f, v))
+			add = append(add, c.keyIdx(modelPrefix, f, v))
 		}
 	}
 	for f, v := range prev {
 		if cur == nil || cur[f] != v {
-			rem = append(rem, c.keyIdx(model, f, v))
+			rem = append(rem, c.keyIdx(modelPrefix, f, v))
 		}
 	}
 	return
 }
 
-func diffEncIndexKeys(c *Client, model string, cur, prev map[string]string) (add, rem []string) {
+func diffEncIndexKeys(c *Client, modelPrefix string, cur, prev map[string]string) (add, rem []string) {
 	for f, v := range cur {
 		if prev == nil || prev[f] != v {
-			add = append(add, c.keyIdxEnc(model, f, v))
+			add = append(add, c.keyIdxEnc(modelPrefix, f, v))
 		}
 	}
 	for f, v := range prev {
 		if cur == nil || cur[f] != v {
-			rem = append(rem, c.keyIdxEnc(model, f, v))
+			rem = append(rem, c.keyIdxEnc(modelPrefix, f, v))
 		}
 	}
 	return
 }
 
-func keysFromMap(c *Client, model string, mp map[string]string, f func(field, val string) string) []string {
+func keysFromMap(c *Client, modelPrefix string, mp map[string]string, f func(prefix, field, val string) string) []string {
 	out := make([]string, 0, len(mp))
 	for k, v := range mp {
-		out = append(out, f(k, v))
+		out = append(out, f(modelPrefix, k, v))
 	}
 	return out
 }

@@ -12,39 +12,33 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// prepareSaveInternal منطق اصلی آماده‌سازی یک شیء برای ذخیره را در خود دارد.
 func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion any, ttl ...time.Duration) (string, []string, []interface{}, error) {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
-	// FIX: Check if the object is new *before* applying defaults to the PK.
-	// این بررسی باید قبل از هرگونه تغییر در کلید اصلی انجام شود.
 	isNew := false
 	id, err := readPrimaryKey(v, meta)
 	if err != nil || id == "" {
 		isNew = true
 	}
 
-	// ابتدا اینترفیس‌های سفارشی را اجرا می‌کنیم
 	if d, ok := v.(Defaultable); ok {
 		d.SetDefaults()
 	}
-	// سپس مقادیر پیش‌فرض مبتنی بر تگ‌ها را اعمال می‌کنیم
 	applyDefaults(v, meta)
-	
-	// حالا از وجود کلید اصلی اطمینان حاصل می‌کنیم (اگر رشته‌ای باشد و خالی باشد، uuid ساخته می‌شود)
+
 	id, err = ensurePrimaryKey(v, meta)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
-	// در نهایت، قلاب‌های چرخه حیات را با وضعیت isNew که به درستی تشخیص داده شده، اجرا می‌کنیم
 	applyLifecycleHooks(v, meta, isNew)
 
-	valKey := c.keyVal(meta.StructName, id)
-	verKey := c.keyVer(meta.StructName, id)
+	modelPrefix := c.modelPrefix(meta)
+	valKey := c.keyVal(modelPrefix, id)
+	verKey := c.keyVer(modelPrefix, id)
 
 	plain, err := json.Marshal(v)
 	if err != nil {
@@ -72,13 +66,18 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		return "", nil, nil, fmt.Errorf("marshal enc: %w", err)
 	}
 
-	addUniq, delUniq := diffUniqueKeys(c, meta.StructName, newUniq, oldUniq)
-	addIdx, remIdx := diffIndexKeys(c, meta.StructName, newIdx, oldIdx)
-	addIdxEnc, remIdxEnc := diffEncIndexKeys(c, meta.StructName, newIdxEnc, oldIdxEnc)
+	addUniq, delUniq := diffUniqueKeys(c, modelPrefix, newUniq, oldUniq)
+	addIdx, remIdx := diffIndexKeys(c, modelPrefix, newIdx, oldIdx)
+	addIdxEnc, remIdxEnc := diffEncIndexKeys(c, modelPrefix, newIdxEnc, oldIdxEnc)
 
+	// >>>>>>>>> MODIFIED: منطق جدید برای تعیین TTL <<<<<<<<<
 	var exp time.Duration
 	if len(ttl) > 0 {
+		// TTL ارسال شده به تابع در اولویت اول است
 		exp = ttl[0]
+	} else if meta.AutoDeleteTTL > 0 {
+		// در غیر این صورت، از TTL تعریف شده در اینترفیس استفاده می‌شود
+		exp = meta.AutoDeleteTTL
 	}
 
 	keys := make([]string, 0, 2+len(addUniq)+len(delUniq)+len(addIdx)+len(remIdx)+len(addIdxEnc)+len(remIdxEnc))
@@ -101,6 +100,7 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 	return id, keys, argv, nil
 }
 
+// ... (سایر توابع فایل بدون تغییر باقی می‌مانند) ...
 func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
 	if v == nil {
 		return "", errors.New("nil value")
@@ -200,7 +200,8 @@ func (c *Client) Load(ctx context.Context, dst any, id string) error {
 			return errors.New("empty pk for Load")
 		}
 	}
-	valKey := c.keyVal(meta.StructName, id)
+	modelPrefix := c.modelPrefix(meta)
+	valKey := c.keyVal(modelPrefix, id)
 	encJSON, err := c.rdb.Get(ctx, valKey).Result()
 	if err != nil {
 		return err
@@ -223,8 +224,11 @@ func (c *Client) Delete(ctx context.Context, v any, id string) error {
 			return errors.New("empty pk for Delete")
 		}
 	}
-	valKey := c.keyVal(meta.StructName, id)
-	verKey := c.keyVer(meta.StructName, id)
+
+	modelPrefix := c.modelPrefix(meta)
+	valKey := c.keyVal(modelPrefix, id)
+	verKey := c.keyVer(modelPrefix, id)
+
 	var oldIdx, oldUniq, oldIdxEnc map[string]string
 	if encJSON, _ := c.rdb.Get(ctx, valKey).Result(); encJSON != "" {
 		if plain, _ := c.decryptForType(ctx, meta, encJSON); len(plain) > 0 {
@@ -233,9 +237,9 @@ func (c *Client) Delete(ctx context.Context, v any, id string) error {
 			oldIdxEnc = extractEncIndex(c, v, plain, meta)
 		}
 	}
-	delUniq := keysFromMap(c, meta.StructName, oldUniq, func(field, val string) string { return c.keyUniq(meta.StructName, field, val) })
-	remIdx := keysFromMap(c, meta.StructName, oldIdx, func(field, val string) string { return c.keyIdx(meta.StructName, field, val) })
-	remIdxEnc := keysFromMap(c, meta.StructName, oldIdxEnc, func(field, mac string) string { return c.keyIdxEnc(meta.StructName, field, mac) })
+	delUniq := keysFromMap(c, modelPrefix, oldUniq, func(prefix, field, val string) string { return c.keyUniq(prefix, field, val) })
+	remIdx := keysFromMap(c, modelPrefix, oldIdx, func(prefix, field, val string) string { return c.keyIdx(prefix, field, val) })
+	remIdxEnc := keysFromMap(c, modelPrefix, oldIdxEnc, func(prefix, field, mac string) string { return c.keyIdxEnc(prefix, field, mac) })
 	keys := make([]string, 0, 2+len(delUniq)+len(remIdx)+len(remIdxEnc))
 	keys = append(keys, verKey, valKey)
 	keys = append(keys, delUniq...)
@@ -272,7 +276,8 @@ func (c *Client) UpdateFieldsFast(ctx context.Context, sample any, id string, up
 	if id == "" {
 		return errors.New("empty id for UpdateFieldsFast")
 	}
-	valKey := c.keyVal(meta.StructName, id)
+	modelPrefix := c.modelPrefix(meta)
+	valKey := c.keyVal(modelPrefix, id)
 	encryptedUpdates, err := c.encryptUpdateMap(ctx, meta, updates)
 	if err != nil {
 		return fmt.Errorf("could not encrypt updates: %w", err)
@@ -299,7 +304,8 @@ func (c *Client) Exists(ctx context.Context, sample any, id string) (bool, error
 	if id == "" {
 		return false, errors.New("empty id")
 	}
-	return c.rdb.Exists(ctx, c.keyVal(meta.StructName, id)).Val() == 1, nil
+	modelPrefix := c.modelPrefix(meta)
+	return c.rdb.Exists(ctx, c.keyVal(modelPrefix, id)).Val() == 1, nil
 }
 
 func (c *Client) PageIDsByIndex(ctx context.Context, sample any, field, value string, cursor uint64, count int64) ([]string, uint64, error) {
@@ -307,7 +313,8 @@ func (c *Client) PageIDsByIndex(ctx context.Context, sample any, field, value st
 	if err != nil {
 		return nil, 0, err
 	}
-	key := c.keyIdx(meta.StructName, field, value)
+	modelPrefix := c.modelPrefix(meta)
+	key := c.keyIdx(modelPrefix, field, value)
 	ids, next, err := c.rdb.SScan(ctx, key, cursor, "", count).Result()
 	return ids, next, err
 }
@@ -318,7 +325,8 @@ func (c *Client) PageIDsByEncIndex(ctx context.Context, sample any, field, plain
 		return nil, 0, err
 	}
 	mac := macString(c.kek, plainValue)
-	key := c.keyIdxEnc(meta.StructName, field, mac)
+	modelPrefix := c.modelPrefix(meta)
+	key := c.keyIdxEnc(modelPrefix, field, mac)
 	ids, next, err := c.rdb.SScan(ctx, key, cursor, "", count).Result()
 	return ids, next, err
 }
@@ -331,7 +339,8 @@ func (c *Client) SavePayload(ctx context.Context, sample any, id string, payload
 	if err != nil {
 		return err
 	}
-	pkey := c.keyPayload(meta.StructName, id)
+	modelPrefix := c.modelPrefix(meta)
+	pkey := c.keyPayload(modelPrefix, id)
 	bs, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -359,7 +368,8 @@ func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt 
 	if err != nil {
 		return nil, err
 	}
-	pkey := c.keyPayload(meta.StructName, id)
+	modelPrefix := c.modelPrefix(meta)
+	pkey := c.keyPayload(modelPrefix, id)
 	val, err := c.rdb.Get(ctx, pkey).Result()
 	if err != nil {
 		return nil, err
@@ -374,17 +384,22 @@ func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt 
 	return []byte(val), nil
 }
 
-func (c *Client) Touch(ctx context.Context, modelName string, id string, ttl time.Duration) error {
+func (c *Client) Touch(ctx context.Context, sample any, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	if modelName == "" {
-		return errors.New("modelName cannot be empty")
+	if sample == nil {
+		return errors.New("sample cannot be nil")
 	}
-	key := c.keyVal(modelName, id)
+	meta, err := c.getModelMetadata(sample)
+	if err != nil {
+		return err
+	}
+	modelPrefix := c.modelPrefix(meta)
+	key := c.keyVal(modelPrefix, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
@@ -395,17 +410,22 @@ func (c *Client) Touch(ctx context.Context, modelName string, id string, ttl tim
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
-func (c *Client) TouchPayload(ctx context.Context, modelName string, id string, ttl time.Duration) error {
+func (c *Client) TouchPayload(ctx context.Context, sample any, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	if modelName == "" {
-		return errors.New("modelName cannot be empty")
+	if sample == nil {
+		return errors.New("sample cannot be nil")
 	}
-	key := c.keyPayload(modelName, id)
+	meta, err := c.getModelMetadata(sample)
+	if err != nil {
+		return err
+	}
+	modelPrefix := c.modelPrefix(meta)
+	key := c.keyPayload(modelPrefix, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err

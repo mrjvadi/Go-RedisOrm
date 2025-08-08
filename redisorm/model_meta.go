@@ -3,11 +3,14 @@ package redisorm
 import (
 	"reflect"
 	"strings"
+	"time"
 )
 
 // ModelMetadata نتایج تحلیل struct را برای جلوگیری از reflection تکراری، کش می‌کند.
 type ModelMetadata struct {
-	StructName string
+	StructName    string
+	GroupName     string
+	AutoDeleteTTL time.Duration // >>>>>>>>> NEW <<<<<<<<<
 
 	JsonNames map[string]string
 
@@ -18,8 +21,8 @@ type ModelMetadata struct {
 	UniqueFields         []string
 	SecretFields         []string
 	DefaultFields        map[string]string
-	AutoCreateTimeFields []string // >>>>>>>>> NEW <<<<<<<<<
-	AutoUpdateTimeFields []string // >>>>>>>>> NEW <<<<<<<<<
+	AutoCreateTimeFields []string
+	AutoUpdateTimeFields []string
 }
 
 // getModelMetadata یک struct را تحلیل کرده و نتایج را در کش ذخیره می‌کند.
@@ -38,13 +41,21 @@ func (c *Client) getModelMetadata(v any) (*ModelMetadata, error) {
 		DefaultFields: make(map[string]string),
 	}
 
-	// >>>>>>>>> NEW: Check for ModelNamer interface <<<<<<<<<
-	// بررسی می‌کند که آیا struct اینترفیس ModelNamer را پیاده‌سازی کرده است یا خیر.
 	modelInstance := reflect.New(rt).Interface()
+
 	if namer, ok := modelInstance.(ModelNamer); ok {
 		meta.StructName = namer.ModelName()
 	} else {
 		meta.StructName = rt.Name()
+	}
+
+	if grouper, ok := modelInstance.(ModelGrouper); ok {
+		meta.GroupName = grouper.GroupName()
+	}
+
+	// >>>>>>>>> NEW: بررسی اینترفیس AutoDeleter <<<<<<<<<
+	if autoDeleter, ok := modelInstance.(AutoDeleter); ok {
+		meta.AutoDeleteTTL = autoDeleter.AutoDeleteTTL()
 	}
 
 	for i := 0; i < rt.NumField(); i++ {
@@ -78,7 +89,6 @@ func (c *Client) getModelMetadata(v any) (*ModelMetadata, error) {
 		if strings.Contains(redisTag, "unique") {
 			meta.UniqueFields = append(meta.UniqueFields, fieldName)
 		}
-		// >>>>>>>>> NEW: Check for lifecycle tags <<<<<<<<<
 		if strings.Contains(redisTag, "auto_create_time") {
 			meta.AutoCreateTimeFields = append(meta.AutoCreateTimeFields, fieldName)
 		}

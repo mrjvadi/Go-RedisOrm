@@ -60,21 +60,29 @@ func New(rdb *redis.Client, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
+// >>>>>>>>> NEW: تابع کمکی برای ساخت پیشوند کلید <<<<<<<<<
+func (c *Client) modelPrefix(meta *ModelMetadata) string {
+	if meta.GroupName != "" {
+		return fmt.Sprintf("%s:%s", meta.GroupName, meta.StructName)
+	}
+	return meta.StructName
+}
+
 // Key builders
-func (c *Client) keyVal(model, id string) string { return fmt.Sprintf("%s:val:%s:%s", c.ns, model, id) }
-func (c *Client) keyVer(model, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, model, id) }
-func (c *Client) keyIdx(model, field, value string) string {
-	return fmt.Sprintf("%s:idx:%s:%s:%s", c.ns, model, field, value)
+func (c *Client) keyVal(modelPrefix, id string) string { return fmt.Sprintf("%s:val:%s:%s", c.ns, modelPrefix, id) }
+func (c *Client) keyVer(modelPrefix, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, modelPrefix, id) }
+func (c *Client) keyIdx(modelPrefix, field, value string) string {
+	return fmt.Sprintf("%s:idx:%s:%s:%s", c.ns, modelPrefix, field, value)
 }
-func (c *Client) keyIdxEnc(model, field, mac string) string {
-	return fmt.Sprintf("%s:idxenc:%s:%s:%s", c.ns, model, field, mac)
+func (c *Client) keyIdxEnc(modelPrefix, field, mac string) string {
+	return fmt.Sprintf("%s:idxenc:%s:%s:%s", c.ns, modelPrefix, field, mac)
 }
-func (c *Client) keyUniq(model, field, value string) string {
-	return fmt.Sprintf("%s:uniq:%s:%s:%s", c.ns, model, field, value)
+func (c *Client) keyUniq(modelPrefix, field, value string) string {
+	return fmt.Sprintf("%s:uniq:%s:%s:%s", c.ns, modelPrefix, field, value)
 }
-func (c *Client) keyLock(model, id string) string {
-	return fmt.Sprintf("%s:lock:%s:%s", c.ns, model, id)
+func (c *Client) keyLock(modelPrefix, id string) string {
+	return fmt.Sprintf("%s:lock:%s:%s", c.ns, modelPrefix, id)
 }
-func (c *Client) keyPayload(model, id string) string {
-	return fmt.Sprintf("%s:pl:%s:%s", c.ns, model, id)
+func (c *Client) keyPayload(modelPrefix, id string) string {
+	return fmt.Sprintf("%s:pl:%s:%s", c.ns, modelPrefix, id)
 }
