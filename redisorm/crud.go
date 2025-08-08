@@ -13,7 +13,6 @@ import (
 )
 
 // prepareSaveInternal منطق اصلی آماده‌سازی یک شیء برای ذخیره را در خود دارد.
-// این تابع برای جلوگیری از تکرار کد بین Save و SaveAll استفاده می‌شود.
 func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion any, ttl ...time.Duration) (string, []string, []interface{}, error) {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
@@ -68,8 +67,10 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		exp = ttl[0]
 	}
 
+	// >>>>>>>>> FIX: Correctly append multiple slices <<<<<<<<<
 	keys := make([]string, 0, 2+len(addUniq)+len(delUniq)+len(addIdx)+len(remIdx)+len(addIdxEnc)+len(remIdxEnc))
-	keys = append(keys, verKey, valKey, addUniq...)
+	keys = append(keys, verKey, valKey)
+	keys = append(keys, addUniq...)
 	keys = append(keys, delUniq...)
 	keys = append(keys, addIdx...)
 	keys = append(keys, remIdx...)
@@ -103,7 +104,6 @@ func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string,
 	return id, nil
 }
 
-// SaveAll یک اسلایس از اشیاء را با استفاده از Redis pipeline برای عملکرد بالا ذخیره می‌کند.
 func (c *Client) SaveAll(ctx context.Context, slice any) ([]string, error) {
 	rv := reflect.ValueOf(slice)
 	if rv.Kind() != reflect.Slice {
@@ -116,7 +116,8 @@ func (c *Client) SaveAll(ctx context.Context, slice any) ([]string, error) {
 
 	pipe := c.rdb.Pipeline()
 	ids := make([]string, count)
-	cmds := make([]*redis.StringCmd, count)
+	// >>>>>>>>> FIX: Changed type from *redis.StringCmd to *redis.Cmd <<<<<<<<<
+	cmds := make([]*redis.Cmd, count)
 
 	for i := 0; i < count; i++ {
 		v := rv.Index(i).Interface()
@@ -134,7 +135,6 @@ func (c *Client) SaveAll(ctx context.Context, slice any) ([]string, error) {
 
 	for i, cmd := range cmds {
 		if err := cmd.Err(); err != nil {
-			// تلاش برای برگرداندن یک پیام خطای مفیدتر
 			if strings.Contains(err.Error(), "UNIQUE_CONFLICT") {
 				return nil, fmt.Errorf("unique constraint violation on item %d (id: %s)", i, ids[i])
 			}
@@ -174,7 +174,6 @@ func (c *Client) SaveOptimistic(ctx context.Context, v any, ttl ...time.Duration
 	return id, nil
 }
 
-// ... (سایر توابع CRUD مانند Load, Delete, UpdateFields و غیره در اینجا قرار دارند)
 func (c *Client) Load(ctx context.Context, dst any, id string) error {
 	if dst == nil {
 		return errors.New("nil dst")
@@ -363,45 +362,42 @@ func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt 
 	return []byte(val), nil
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
-// Touch زمان انقضای (TTL) یک کلید را تمدید می‌کند.
-// این تابع اکنون به جای یک نمونه struct، نام مدل را به عنوان رشته دریافت می‌کند.
-func (c *Client) Touch(ctx context.Context, modelName string, id string, ttl time.Duration) error {
+// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
+func (c *Client) Touch(ctx context.Context, sample any, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	if modelName == "" {
-		return errors.New("modelName cannot be empty")
+	meta, err := c.getModelMetadata(sample)
+	if err != nil {
+		return err
 	}
-	key := c.keyVal(modelName, id)
-	// با استفاده از EXISTS اطمینان حاصل می‌کنیم که کلید وجود دارد.
-	// دستور EXPIRE اگر کلید وجود نداشته باشد 0 برمی‌گرداند که می‌تواند گمراه‌کننده باشد.
+	key := c.keyVal(meta.StructName, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
 	}
 	if exists == 0 {
-		return redis.Nil // مانند GET، اگر کلید پیدا نشد Nil برگردان.
+		return redis.Nil
 	}
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
-// >>>>>>>>> CHANGED <<<<<<<<<
-// TouchPayload زمان انقضای (TTL) یک payload را تمدید می‌کند.
-func (c *Client) TouchPayload(ctx context.Context, modelName string, id string, ttl time.Duration) error {
+// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
+func (c *Client) TouchPayload(ctx context.Context, sample any, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	if modelName == "" {
-		return errors.New("modelName cannot be empty")
+	meta, err := c.getModelMetadata(sample)
+	if err != nil {
+		return err
 	}
-	key := c.keyPayload(modelName, id)
+	key := c.keyPayload(meta.StructName, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
