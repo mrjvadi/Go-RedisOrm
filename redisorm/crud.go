@@ -20,23 +20,27 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 	}
 
 	// FIX: Check if the object is new *before* applying defaults to the PK.
+	// این بررسی باید قبل از هرگونه تغییر در کلید اصلی انجام شود.
 	isNew := false
 	id, err := readPrimaryKey(v, meta)
 	if err != nil || id == "" {
 		isNew = true
 	}
 
+	// ابتدا اینترفیس‌های سفارشی را اجرا می‌کنیم
 	if d, ok := v.(Defaultable); ok {
 		d.SetDefaults()
 	}
+	// سپس مقادیر پیش‌فرض مبتنی بر تگ‌ها را اعمال می‌کنیم
 	applyDefaults(v, meta)
 	
+	// حالا از وجود کلید اصلی اطمینان حاصل می‌کنیم (اگر رشته‌ای باشد و خالی باشد، uuid ساخته می‌شود)
 	id, err = ensurePrimaryKey(v, meta)
 	if err != nil {
 		return "", nil, nil, err
 	}
 
-	// Now apply lifecycle hooks using the correctly determined `isNew` status.
+	// در نهایت، قلاب‌های چرخه حیات را با وضعیت isNew که به درستی تشخیص داده شده، اجرا می‌کنیم
 	applyLifecycleHooks(v, meta, isNew)
 
 	valKey := c.keyVal(meta.StructName, id)
