@@ -12,7 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// prepareSaveInternal منطق اصلی آماده‌سازی یک شیء برای ذخیره را در خود دارد.
 func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion any, ttl ...time.Duration) (string, []string, []interface{}, error) {
 	meta, err := c.getModelMetadata(v)
 	if err != nil {
@@ -23,12 +22,23 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		d.SetDefaults()
 	}
 	applyDefaults(v, meta)
-	id, err := ensurePrimaryKey(v, meta)
+	
+	// بررسی اینکه آیا شیء جدید است یا خیر (برای قلاب auto_create_time)
+	isNew := false
+	id, err := readPrimaryKey(v, meta)
+	if err != nil || id == "" {
+		isNew = true
+	}
+	
+	id, err = ensurePrimaryKey(v, meta)
 	if err != nil {
 		return "", nil, nil, err
 	}
-	touchTimestamps(v, meta)
 
+	// >>>>>>>>> NEW: Apply lifecycle hooks <<<<<<<<<
+	applyLifecycleHooks(v, meta, isNew)
+
+	// ... (بقیه تابع بدون تغییر باقی می‌ماند)
 	valKey := c.keyVal(meta.StructName, id)
 	verKey := c.keyVer(meta.StructName, id)
 
@@ -67,7 +77,6 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 		exp = ttl[0]
 	}
 
-	// >>>>>>>>> FIX: Correctly append multiple slices <<<<<<<<<
 	keys := make([]string, 0, 2+len(addUniq)+len(delUniq)+len(addIdx)+len(remIdx)+len(addIdxEnc)+len(remIdxEnc))
 	keys = append(keys, verKey, valKey)
 	keys = append(keys, addUniq...)
@@ -87,7 +96,7 @@ func (c *Client) prepareSaveInternal(ctx context.Context, v any, expectedVersion
 
 	return id, keys, argv, nil
 }
-
+// (سایر توابع بدون تغییر باقی می‌مانند)
 func (c *Client) Save(ctx context.Context, v any, ttl ...time.Duration) (string, error) {
 	if v == nil {
 		return "", errors.New("nil value")
@@ -116,7 +125,6 @@ func (c *Client) SaveAll(ctx context.Context, slice any) ([]string, error) {
 
 	pipe := c.rdb.Pipeline()
 	ids := make([]string, count)
-	// >>>>>>>>> FIX: Changed type from *redis.StringCmd to *redis.Cmd <<<<<<<<<
 	cmds := make([]*redis.Cmd, count)
 
 	for i := 0; i < count; i++ {
@@ -362,19 +370,17 @@ func (c *Client) GetPayload(ctx context.Context, sample any, id string, decrypt 
 	return []byte(val), nil
 }
 
-// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
-func (c *Client) Touch(ctx context.Context, sample any, id string, ttl time.Duration) error {
+func (c *Client) Touch(ctx context.Context, modelName string, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	meta, err := c.getModelMetadata(sample)
-	if err != nil {
-		return err
+	if modelName == "" {
+		return errors.New("modelName cannot be empty")
 	}
-	key := c.keyVal(meta.StructName, id)
+	key := c.keyVal(modelName, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err
@@ -385,19 +391,17 @@ func (c *Client) Touch(ctx context.Context, sample any, id string, ttl time.Dura
 	return c.rdb.Expire(ctx, key, ttl).Err()
 }
 
-// >>>>>>>>> FIX: Reverted signature to use 'sample any' <<<<<<<<<
-func (c *Client) TouchPayload(ctx context.Context, sample any, id string, ttl time.Duration) error {
+func (c *Client) TouchPayload(ctx context.Context, modelName string, id string, ttl time.Duration) error {
 	if id == "" {
 		return errors.New("empty id")
 	}
 	if ttl <= 0 {
 		return errors.New("ttl must be > 0")
 	}
-	meta, err := c.getModelMetadata(sample)
-	if err != nil {
-		return err
+	if modelName == "" {
+		return errors.New("modelName cannot be empty")
 	}
-	key := c.keyPayload(meta.StructName, id)
+	key := c.keyPayload(modelName, id)
 	exists, err := c.rdb.Exists(ctx, key).Result()
 	if err != nil {
 		return err

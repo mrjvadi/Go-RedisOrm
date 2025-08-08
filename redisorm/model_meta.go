@@ -5,25 +5,24 @@ import (
 	"strings"
 )
 
-// ModelMetadata stores cached reflection results for a struct type.
+// ModelMetadata نتایج تحلیل struct را برای جلوگیری از reflection تکراری، کش می‌کند.
 type ModelMetadata struct {
 	StructName string
 
-	// Map of Go field name to its JSON name
 	JsonNames map[string]string
 
-	// Lists of Go field names
-	PKFields         []string
-	VersionFields    []string
-	IndexedFields    []string
-	EncIndexedFields []string
-	UniqueFields     []string
-	SecretFields     []string
-	DefaultFields    map[string]string // field name -> default tag value
-	TimestampFields  []string
+	PKFields             []string
+	VersionFields        []string
+	IndexedFields        []string
+	EncIndexedFields     []string
+	UniqueFields         []string
+	SecretFields         []string
+	DefaultFields        map[string]string
+	AutoCreateTimeFields []string // >>>>>>>>> NEW <<<<<<<<<
+	AutoUpdateTimeFields []string // >>>>>>>>> NEW <<<<<<<<<
 }
 
-// getModelMetadata analyzes a struct type using reflection and caches the result.
+// getModelMetadata یک struct را تحلیل کرده و نتایج را در کش ذخیره می‌کند.
 func (c *Client) getModelMetadata(v any) (*ModelMetadata, error) {
 	rt := reflect.TypeOf(v)
 	for rt.Kind() == reflect.Pointer {
@@ -35,14 +34,22 @@ func (c *Client) getModelMetadata(v any) (*ModelMetadata, error) {
 	}
 
 	meta := &ModelMetadata{
-		StructName:    rt.Name(),
 		JsonNames:     make(map[string]string),
 		DefaultFields: make(map[string]string),
 	}
 
+	// >>>>>>>>> NEW: Check for ModelNamer interface <<<<<<<<<
+	// بررسی می‌کند که آیا struct اینترفیس ModelNamer را پیاده‌سازی کرده است یا خیر.
+	modelInstance := reflect.New(rt).Interface()
+	if namer, ok := modelInstance.(ModelNamer); ok {
+		meta.StructName = namer.ModelName()
+	} else {
+		meta.StructName = rt.Name()
+	}
+
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
-		if f.PkgPath != "" { // Skip unexported fields
+		if f.PkgPath != "" {
 			continue
 		}
 
@@ -71,15 +78,19 @@ func (c *Client) getModelMetadata(v any) (*ModelMetadata, error) {
 		if strings.Contains(redisTag, "unique") {
 			meta.UniqueFields = append(meta.UniqueFields, fieldName)
 		}
+		// >>>>>>>>> NEW: Check for lifecycle tags <<<<<<<<<
+		if strings.Contains(redisTag, "auto_create_time") {
+			meta.AutoCreateTimeFields = append(meta.AutoCreateTimeFields, fieldName)
+		}
+		if strings.Contains(redisTag, "auto_update_time") {
+			meta.AutoUpdateTimeFields = append(meta.AutoUpdateTimeFields, fieldName)
+		}
 
 		if f.Tag.Get("secret") == "true" {
 			meta.SecretFields = append(meta.SecretFields, fieldName)
 		}
 		if defaultTag := f.Tag.Get("default"); defaultTag != "" {
 			meta.DefaultFields[fieldName] = defaultTag
-		}
-		if strings.EqualFold(fieldName, "CreatedAt") || strings.EqualFold(fieldName, "UpdatedAt") {
-			meta.TimestampFields = append(meta.TimestampFields, fieldName)
 		}
 	}
 

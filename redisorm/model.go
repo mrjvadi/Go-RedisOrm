@@ -7,19 +7,50 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.comcom/google/uuid"
 )
 
+// Defaultable یک اینترفیس برای structهایی است که نیاز به تنظیم مقادیر پیش‌فرض سفارشی دارند.
 type Defaultable interface{ SetDefaults() }
 
-func typeName(v any) string {
-	t := reflect.TypeOf(v)
-	for t.Kind() == reflect.Pointer {
-		t = t.Elem()
-	}
-	return t.Name()
+// ModelNamer یک اینترفیس برای structهایی است که می‌خواهند نام مدل خود را در Redis سفارشی کنند.
+// این متد جایگزین نام پیش‌فرض struct می‌شود.
+type ModelNamer interface {
+	ModelName() string
 }
 
+// applyLifecycleHooks قلاب‌های چرخه حیات مانند auto_create_time و auto_update_time را اعمال می‌کند.
+func applyLifecycleHooks(v any, meta *ModelMetadata, isNew bool) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return
+	}
+	rv = rv.Elem()
+	now := time.Now().UTC()
+
+	// اعمال auto_update_time برای تمام فیلدهای مشخص شده
+	for _, fieldName := range meta.AutoUpdateTimeFields {
+		f := rv.FieldByName(fieldName)
+		if f.IsValid() && f.CanSet() && f.Type().String() == "time.Time" {
+			f.Set(reflect.ValueOf(now))
+		}
+	}
+
+	// اگر شیء جدید است، auto_create_time را برای فیلدهای مشخص شده اعمال کن
+	if isNew {
+		for _, fieldName := range meta.AutoCreateTimeFields {
+			f := rv.FieldByName(fieldName)
+			if f.IsValid() && f.CanSet() && f.Type().String() == "time.Time" {
+				// فقط اگر مقدار فعلی صفر باشد، آن را تنظیم کن
+				if f.Interface().(time.Time).IsZero() {
+					f.Set(reflect.ValueOf(now))
+				}
+			}
+		}
+	}
+}
+
+// (سایر توابع مانند ensurePrimaryKey, readPrimaryKey, applyDefaults و ... بدون تغییر باقی می‌مانند)
 func ensurePrimaryKey(v any, meta *ModelMetadata) (string, error) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
@@ -62,28 +93,6 @@ func readPrimaryKey(v any, meta *ModelMetadata) (string, error) {
 		return "", errors.New("pk must be string")
 	}
 	return fv.String(), nil
-}
-
-func touchTimestamps(v any, meta *ModelMetadata) {
-	rv := reflect.ValueOf(v)
-	if rv.Kind() != reflect.Pointer || rv.IsNil() {
-		return
-	}
-	rv = rv.Elem()
-	now := time.Now().UTC()
-
-	for _, fieldName := range meta.TimestampFields {
-		f := rv.FieldByName(fieldName)
-		if f.IsValid() && f.CanSet() && f.Type().String() == "time.Time" {
-			if strings.EqualFold(fieldName, "UpdatedAt") {
-				f.Set(reflect.ValueOf(now))
-			} else if strings.EqualFold(fieldName, "CreatedAt") {
-				if f.Interface().(time.Time).IsZero() {
-					f.Set(reflect.ValueOf(now))
-				}
-			}
-		}
-	}
 }
 
 func applyDefaults(v any, meta *ModelMetadata) {
