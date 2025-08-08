@@ -140,3 +140,30 @@ else
 end
 return 1
 `
+
+// >>>>>>>>> NEW SCRIPT <<<<<<<<<
+// UpdateFieldsFast: آپدیت اتمی و سریع فیلدها در JSON.
+// این اسکریپت ایندکس‌ها را مدیریت نمی‌کند و به کتابخانه cjson در Redis نیاز دارد.
+const luaUpdateFieldsFast = `
+-- KEYS: [valKey]
+-- ARGV: [updates_json_string]
+local valKey = KEYS[1]
+local updatesJson = ARGV[1]
+
+if redis.call("EXISTS", valKey) == 0 then
+  return redis.error_reply('NOT_FOUND')
+end
+
+local currentJson = redis.call("GET", valKey)
+local currentData = cjson.decode(currentJson)
+local updatesData = cjson.decode(updatesJson)
+
+for k, v in pairs(updatesData) do
+  currentData[k] = v
+end
+
+local newJson = cjson.encode(currentData)
+redis.call("SET", valKey, newJson)
+
+return 1
+`

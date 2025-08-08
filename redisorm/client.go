@@ -3,6 +3,7 @@ package redisorm
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -13,10 +14,15 @@ type Client struct {
 	kek []byte // master key (KEK) برای لفافه‌کردن DEKها
 
 	// Lua scripts
-	luaSave        *redis.Script
-	luaDelete      *redis.Script
-	luaPayloadSave *redis.Script
-	luaUnlock      *redis.Script
+	luaSave             *redis.Script
+	luaDelete           *redis.Script
+	luaPayloadSave      *redis.Script
+	luaUnlock           *redis.Script
+	luaUpdateFieldsFast *redis.Script // >>>>>>>>> NEW <<<<<<<<<
+
+	// >>>>>>>>> NEW <<<<<<<<<
+	// Cache for model metadata to avoid repeated reflection
+	metaCache sync.Map
 }
 
 var ErrVersionConflict = errors.New("version conflict")
@@ -31,7 +37,6 @@ func WithNamespace(ns string) Option {
 	}
 }
 
-// KEK باید 16/24/32 بایتی باشه؛ اگه ندی، برای dev یه KEK تصادفی ساخته می‌شه (برای production حتما KEK امن بده).
 func WithMasterKey(kek []byte) Option {
 	return func(c *Client) { c.kek = kek }
 }
@@ -46,21 +51,19 @@ func New(rdb *redis.Client, opts ...Option) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("generate runtime KEK: %w", err)
 		}
-		c.kek = key // فقط برای dev
+		c.kek = key
 	}
 	c.luaUnlock = redis.NewScript(luaUnlock)
 	c.luaSave = redis.NewScript(luaSave)
 	c.luaDelete = redis.NewScript(luaDelete)
 	c.luaPayloadSave = redis.NewScript(luaPayloadSave)
+	c.luaUpdateFieldsFast = redis.NewScript(luaUpdateFieldsFast) // >>>>>>>>> NEW <<<<<<<<<
 	return c, nil
 }
 
 // Key builders
 func (c *Client) keyVal(model, id string) string { return fmt.Sprintf("%s:val:%s:%s", c.ns, model, id) }
-func (c *Client) keyVer(model, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, model, id) }
-func (c *Client) keyDEKField(model, id, field string) string {
-	return fmt.Sprintf("%s:dekf:%s:%s:%s", c.ns, model, id, field)
-}
+func (c. *Client) keyVer(model, id string) string { return fmt.Sprintf("%s:ver:%s:%s", c.ns, model, id) }
 func (c *Client) keyIdx(model, field, value string) string {
 	return fmt.Sprintf("%s:idx:%s:%s:%s", c.ns, model, field, value)
 }
@@ -78,4 +81,10 @@ func (c *Client) keyPayload(model, id string) string {
 }
 func (c *Client) keyPayloadDEK(model, id string) string {
 	return fmt.Sprintf("%s:dekp:%s:%s", c.ns, model, id)
+}
+
+// >>>>>>>>> CHANGED <<<<<<<<<
+// DEK key is now per-object, not per-field, for better performance.
+func (c *Client) keyDEKObject(model, id string) string {
+	return fmt.Sprintf("%s:dek:%s:%s", c.ns, model, id)
 }
