@@ -20,7 +20,6 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at" redis:",auto_update_time"`
 }
 
-// >>>>>>>>> NEW STRUCT FOR TESTING TAGS <<<<<<<<<
 // AuditLog یک مدل برای تست کردن قابلیت‌های سفارشی است.
 type AuditLog struct {
 	ID        string    `json:"id" redis:"pk" default:"uuid"`
@@ -41,8 +40,8 @@ var (
 	rdb *redis.Client
 )
 
-// setupClient یک کلاینت ORM برای تست‌ها و بنچمارک‌ها ایجاد می‌کند.
-func setupClient(t testing.TB) {
+// setupClient یک کلاینت ORM برای تست‌ها و بنچمارک‌ها ایجاد می‌کند و namespace را برمی‌گرداند.
+func setupClient(t testing.TB) (*redisorm.Client, string) {
 	if rdb == nil {
 		rdb = redis.NewClient(&redis.Options{
 			Addr: "localhost:6379", // آدرس Redis خود را در صورت نیاز تغییر دهید
@@ -54,15 +53,15 @@ func setupClient(t testing.TB) {
 
 	ns := fmt.Sprintf("test_%d", time.Now().UnixNano())
 	var err error
-	orm, err = redisorm.New(rdb, redisorm.WithNamespace(ns), redisorm.WithMasterKey([]byte("0123456789abcdef0123456789abcdef")))
+	client, err := redisorm.New(rdb, redisorm.WithNamespace(ns), redisorm.WithMasterKey([]byte("0123456789abcdef0123456789abcdef")))
 	if err != nil {
 		t.Fatalf("failed to create orm client: %v", err)
 	}
+	return client, ns
 }
 
-// >>>>>>>>> NEW UNIT TEST FOR TAGS AND HOOKS <<<<<<<<<
 func TestTagsAndHooks(t *testing.T) {
-	setupClient(t)
+	orm, ns := setupClient(t) // دریافت namespace برای تأیید کلید
 	sess := orm.WithContext(ctx)
 
 	// 1. یک لاگ جدید ذخیره می‌کنیم
@@ -81,13 +80,12 @@ func TestTagsAndHooks(t *testing.T) {
 	if loadedLog.Timestamp.IsZero() || loadedLog.Modified.IsZero() {
 		t.Errorf("Expected timestamps to be set automatically, but they are zero")
 	}
-	// در زمان ایجاد، هر دو زمان باید تقریباً برابر باشند
 	if loadedLog.Modified.Sub(loadedLog.Timestamp) > time.Second {
 		t.Errorf("Expected Timestamp and Modified to be very close on creation")
 	}
 
 	// 3. بررسی می‌کنیم که آیا نام مدل سفارشی در کلید Redis استفاده شده است
-	expectedKey := fmt.Sprintf("%s:val:%s:%s", "test_"+orm.GetNamespace(), "audit_events", id)
+	expectedKey := fmt.Sprintf("%s:val:%s:%s", ns, "audit_events", id)
 	exists, err := rdb.Exists(ctx, expectedKey).Result()
 	if err != nil || exists == 0 {
 		t.Errorf("Expected key '%s' to exist in Redis, but it doesn't", expectedKey)
@@ -106,12 +104,10 @@ func TestTagsAndHooks(t *testing.T) {
 		t.Fatalf("Load after update failed: %v", err)
 	}
 
-	// Timestamp (auto_create_time) نباید تغییر کرده باشد
 	if !updatedLog.Timestamp.Equal(loadedLog.Timestamp) {
 		t.Errorf("Expected Timestamp (auto_create_time) to be unchanged. Got %v, want %v", updatedLog.Timestamp, loadedLog.Timestamp)
 	}
 
-	// Modified (auto_update_time) باید به‌روز شده باشد
 	if updatedLog.Modified.Sub(loadedLog.Timestamp) < time.Second {
 		t.Errorf("Expected Modified (auto_update_time) to be updated. It appears unchanged.")
 	}
@@ -123,7 +119,7 @@ func TestTagsAndHooks(t *testing.T) {
 // --- Benchmarks ---
 
 func BenchmarkSave(b *testing.B) {
-	setupClient(b)
+	orm, _ := setupClient(b)
 	b.ResetTimer()
 	sess := orm.WithContext(ctx)
 	for i := 0; i < b.N; i++ {
@@ -139,7 +135,7 @@ func BenchmarkSave(b *testing.B) {
 }
 
 func BenchmarkLoad(b *testing.B) {
-	setupClient(b)
+	orm, _ := setupClient(b)
 	sess := orm.WithContext(ctx)
 	sampleUser := &User{Email: "load-test@example.com", Country: "US"}
 	id, err := sess.Save(sampleUser)
@@ -157,7 +153,7 @@ func BenchmarkLoad(b *testing.B) {
 }
 
 func BenchmarkUpdateFields(b *testing.B) {
-	setupClient(b)
+	orm, _ := setupClient(b)
 	sess := orm.WithContext(ctx)
 	sampleUser := &User{Email: "update-test@example.com", Country: "CA"}
 	id, err := sess.Save(sampleUser)
@@ -178,7 +174,7 @@ func BenchmarkUpdateFields(b *testing.B) {
 }
 
 func BenchmarkSaveAndLoad(b *testing.B) {
-	setupClient(b)
+	orm, _ := setupClient(b)
 	b.ResetTimer()
 	sess := orm.WithContext(ctx)
 	for i := 0; i < b.N; i++ {
@@ -199,7 +195,7 @@ func BenchmarkSaveAndLoad(b *testing.B) {
 }
 
 func BenchmarkTouch(b *testing.B) {
-	setupClient(b)
+	orm, _ := setupClient(b)
 	sess := orm.WithContext(ctx)
 	sampleUser := &User{Email: "touch-test@example.com", Country: "NZ"}
 	id, err := sess.Save(sampleUser, 10*time.Second)
